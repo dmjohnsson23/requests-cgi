@@ -51,4 +51,4 @@ class PHPAdapter(CGIAdapter):
         path = url.path
         if path.endswith('/'):
             path += 'index.php'
-        return url.path.lstrip('/')
+        return path.lstrip('/')
