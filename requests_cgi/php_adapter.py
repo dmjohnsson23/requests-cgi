@@ -1,5 +1,6 @@
 from os import PathLike
 from typing import Optional, Sequence
+from urllib.parse import urlparse, ParseResult as UrlParseResult
 
 from .cgi_adapter import CGIAdapter
 
@@ -29,16 +30,25 @@ class PHPAdapter(CGIAdapter):
     
     def build_cgi_env(self, request):
         env = super().build_cgi_env(request)
+        url = urlparse(request.url)
         env['REDIRECT_STATUS'] = '200' # Required, PHP will refuse to run if this does not have a value
+        env['SCRIPT_NAME'] = url.path
+        env['REQUEST_URI'] = request.path_url
+        if self.working_dir is not None:
+            env['DOCUMENT_ROOT'] = self.working_dir
+            env['CONTEXT_DOCUMENT_ROOT'] = self.working_dir
         if self.php_script is None:
-            pass
-            # env['SCRIPT_FILENAME'] = self.url_to_filename(request.path_url)
+            env['SCRIPT_FILENAME'] = self.url_to_filename(url)
         else:
             env['SCRIPT_FILENAME'] = self.php_script
         return env
     
-    def url_to_filename(self, url):
+    def url_to_filename(self, url:UrlParseResult):
         """
         Route a URL to a PHP script
         """
-        pass
+        # TODO this is pretty rudimentary
+        path = url.path
+        if path.endswith('/'):
+            path += 'index.php'
+        return url.path.lstrip('/')

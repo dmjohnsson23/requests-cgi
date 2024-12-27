@@ -46,9 +46,9 @@ class CGIAdapter(BaseAdapter):
             # Send an empty body
             stdin = b''
         else:
-            # Set content length if there is a body
+            # Set content length and type if there is a body
             env['CONTENT_LENGTH'] = str(len(stdin))
-
+            env['CONTENT_TYPE'] = request.headers.get('Content-Type', 'text/plain')
         # If we have separate connect/read timeouts, use the read timeout
         # Connection timeout is ignored; it doesn't make sense in this context
         if isinstance(timeout, tuple):
@@ -56,12 +56,14 @@ class CGIAdapter(BaseAdapter):
         try:
             result = run(self.command, capture_output=True, cwd=self.working_dir, env=env, input=stdin, check=True, timeout=timeout)
         except CalledProcessError as e:
-            try:
-                # Process may still have returned a valid response
-                # e.g. an error 404
-                return self.build_response(request, e.stdout)
-            except Exception:
-                raise ConnectionError(e.stderr, e.stdout, request=request) from e
+            if e.stdout:
+                try:
+                    # Process may still have returned a valid response
+                    # e.g. an error 404
+                    return self.build_response(request, e.stdout)
+                except Exception:
+                    pass # raise error below
+            raise ConnectionError(e.stderr, e.stdout, request=request) from e
         except TimeoutExpired as e:
             raise ReadTimeout(request=request) from e
         return self.build_response(request, result.stdout)
@@ -85,9 +87,9 @@ class CGIAdapter(BaseAdapter):
             'SCRIPT_NAME': '/', # TODO is this right?
             'SERVER_NAME': url.hostname,
             'SERVER_PROTOCOL': 'HTTP/1.1',
+            'GATEWAY_INTERFACE': 'CGI/1.1',
             # CONTENT_TYPE
             # AUTH_TYPE
-            # GATEWAY_INTERFACE
             # PATH_TRANSLATED
             # REMOTE_IDENT
             # REMOTE_USER
