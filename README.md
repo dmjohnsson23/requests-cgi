@@ -38,3 +38,18 @@ sess.mount(
     requests_cgi.PHPAdapter() # ...and the adapter will choose the PHP script based on the URL path in each request
 )
 ```
+
+## Roadmap
+
+For sure happening:
+
+* Support FastCGI in addition to CGI
+
+Maybe happening:
+
+* Additional special-purpose adapters for other common languages or frameworks (e.g. Perl?) like the current PHP adapter (I'm not sure what features would be actually helpful to implement for other languages/frameworks though)
+* Support SCGI (Not commonly used in the wild, but it may help me as an educational stepping-stone before reaching FastCGI)
+
+Not happening:
+
+* Support WSGI (Since both applications are Python-based, I don't see a point)
