@@ -1,0 +1,15 @@
+[tool.poetry]
+name = "requests-cgi"
+version = "0.1.0"
+description = "A set of transport adapters for Requests to interact with local CGI and FastCGI applications, including PHP scripts"
+authors = ["Dominick Johnson <dominick.johnson@tylertech.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.8"
+requests = "^2.32.3"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
