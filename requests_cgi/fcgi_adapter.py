@@ -1,24 +1,17 @@
-from http.client import HTTPException
-from io import BytesIO
-from os import PathLike
-from requests import PreparedRequest, Response
-from requests.adapters import BaseAdapter
-from requests.cookies import MockRequest
-from requests.exceptions import ConnectionError, ReadTimeout
-from requests.structures import CaseInsensitiveDict
-from requests.utils import get_encoding_from_headers
-from subprocess import run, CalledProcessError, TimeoutExpired
-from typing import Optional, Sequence, Union, Literal
-from urllib.parse import urlparse
-from enum import IntEnum
-from socket import socket, error as SocketError, AddressFamily, SOCK_STREAM, SOL_SOCKET, SO_REUSEADDR
-import random
 from dataclasses import dataclass
+from enum import IntEnum
+from requests import PreparedRequest
+from requests.exceptions import ConnectionError, ReadTimeout
+from socket import socket, error as SocketError, AddressFamily, SOL_SOCKET, SO_REUSEADDR
+from struct import Struct
+from typing import Optional
+import random
 
-from .cgi_response import CGIResponse
 from .cgi_adapter import CGIAdapter
 
 __all__ = ('FastCGIAdapter',)
+
+FASTCGI_VERSION = 1
 
 class FastCGIRole(IntEnum):
     responder = 1
@@ -46,6 +39,8 @@ class FastCGIState(IntEnum):
     success = 3
 
 
+_HEADER_STRUCT = Struct(">BBHHBx")
+_UNSIGNED_LONG_STRUCT = Struct(">L")
 @dataclass
 class FastCGIHeader:
     version: int
@@ -53,18 +48,57 @@ class FastCGIHeader:
     request_id: int
     content_length: int
     padding_length: int
-    reserved: int
 
     @classmethod
     def decode(cls, data: bytes):
-        return cls(
-            version = data[0],
-            type = FastCGIType(data[1]),
-            request_id = int.from_bytes(data[2:4], "big"),
-            content_length = int.from_bytes(data[4:6], "big"),
-            padding_length = data[6],
-            reserved = data[7],
+        return cls(*_HEADER_STRUCT.unpack(data))
+    
+    def encode(self)->bytes:
+        return _HEADER_STRUCT.pack(
+            self.version, 
+            self.type, 
+            self.request_id, 
+            self.content_length, 
+            self.padding_length, 
         )
+
+@dataclass
+class FastCGIRecord:
+    header: FastCGIHeader
+    content: bytes
+
+    @classmethod
+    def create(cls, fcgi_type: FastCGIType, content: bytes, req_id: int):
+        header = FastCGIHeader(
+            FASTCGI_VERSION,
+            fcgi_type,
+            req_id,
+            len(content),
+            0,
+        )
+        return cls(header, content)
+    
+    @classmethod
+    def read_from_stream(cls, stream):
+        header = stream.read(_HEADER_STRUCT.size)
+        if not header:
+            return None
+        header = FastCGIHeader.decode(header)
+
+        content = bytearray()
+        bytes_read = 0
+        while bytes_read < header.content_length:
+            buffer = stream.read(header.content_length - bytes_read)
+            bytes_read += len(buffer)
+            if buffer:
+                content += buffer
+            if len(buffer) == 0:
+                break
+        stream.read(header.padding_length)
+        return cls(header, content)
+
+    def encode(self):
+        return self.header.encode() + self.content
 
 class FastCGIAdapter(CGIAdapter):
     """
@@ -72,8 +106,6 @@ class FastCGIAdapter(CGIAdapter):
 
     This is largely based on https://github.com/darkpills/fcgi-client/blob/master/src/fcgi_client/FastCGIClient.py
     """
-
-    FASTCGI_VERSION = 1
 
     def __init__(self, address, address_family:AddressFamily=AddressFamily.AF_UNIX, override_env: Optional[dict] = None):
         self.socket = None
@@ -170,20 +202,20 @@ class FastCGIAdapter(CGIAdapter):
     
     def await_response(self, req_id):
         while True:
-            header, content = self._decode_record()
-            if not content:
+            record = FastCGIRecord.read_from_stream(self)
+            if not record:
                 break
 
             # FIXME The header ID returned is always 1 for some reason?
             # if req_id != header.request_id:
             #     continue
-            if header.type == FastCGIType.stdout:
-                self.requests[req_id]['response'] += content
-            if header.type == FastCGIType.stderr:
+            if record.header.type == FastCGIType.stdout:
+                self.requests[req_id]['response'] += record.content
+            if record.header.type == FastCGIType.stderr:
                 self.requests[req_id]['state'] = FastCGIState.error
-                if req_id == header.request_id:
-                    self.requests[req_id]['response'] += content
-            if header.type == FastCGIType.end:
+                if req_id == record.header.request_id:
+                    self.requests[req_id]['response'] += record.content
+            if record.header.type == FastCGIType.end:
                 if self.requests[req_id]['state'] != FastCGIState.error:
                     self.requests[req_id]['state'] = FastCGIState.success
         
@@ -194,20 +226,7 @@ class FastCGIAdapter(CGIAdapter):
         return response
     
     def _encode_record(self, fcgi_type: FastCGIType, content: bytes, req_id: int):
-        length = len(content)
-        response = bytearray()
-        response.append(self.FASTCGI_VERSION)
-        response.append(fcgi_type)
-        response.append((req_id >> 8) & 0xFF)
-        response.append(req_id & 0xFF)
-        response.append((length >> 8) & 0xFF)
-        response.append(length & 0xFF)
-        response.append(0)
-        response.append(0)
-
-        response += content
-
-        return response 
+        return FastCGIRecord.create(fcgi_type, content, req_id).encode()
 
     def _encode_param(self, name: bytes, value: bytes):
         len_name = len(name)
@@ -216,33 +235,9 @@ class FastCGIAdapter(CGIAdapter):
         if len_name < 128:
             record.append(len_name)
         else:
-            record.append((len_name >> 24) | 0x80)
-            record.append((len_name >> 16) & 0xFF)
-            record.append((len_name >> 8) & 0xFF)
-            record.append(len_name & 0xFF)
+            record.extend(_UNSIGNED_LONG_STRUCT.pack(len_name | 0x80_00_00_00))
         if len_value < 128:
             record.append(len_value)
         else:
-            record.append((len_value >> 24) | 0x80)
-            record.append((len_value >> 16) & 0xFF)
-            record.append((len_value >> 8) & 0xFF)
-            record.append(len_value & 0xFF)
+            record.extend(_UNSIGNED_LONG_STRUCT.pack(len_value | 0x80_00_00_00))
         return record + name + value
-
-    def _decode_record(self):
-        header = self.read(8)
-        if not header:
-            return None, None
-        header = FastCGIHeader.decode(header)
-
-        content = bytearray()
-        bytes_read = 0
-        while bytes_read < header.content_length:
-            buffer = self.read(header.content_length - bytes_read)
-            bytes_read += len(buffer)
-            if buffer:
-                content += buffer
-            if len(buffer) == 0:
-                break
-        self.read(header.padding_length)
-        return header, content

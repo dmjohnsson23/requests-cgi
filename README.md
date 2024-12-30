@@ -53,7 +53,7 @@ sess.mount(
 For sure happening:
 
 * Add more tests
-* Added extended FastCGI adapter for PHP-FPM
+* Fix bugs
 
 Maybe happening:
 
@@ -62,3 +62,11 @@ Maybe happening:
 Probably not happening:
 
 * Support WSGI (Since both applications would be Python-based, I don't see a point. There are better ways to accomplish all use cases I can think of.)
+
+## People I stole code from
+
+Credit given where credit is due:
+
+* [Requests](https://docs.python-requests.org/en/latest/_modules/requests/adapters/#HTTPAdapter) -- HTTP-related code based on `HTTPAdapter`
+* [CPython Standard Library](https://github.com/python/cpython/blob/main/Lib/http/client.py) -- More HTTP-related code based on `http.client.HTTPResponse`
+* [FCGI-Client](https://github.com/darkpills/fcgi-client) -- FastCGI code based on this library

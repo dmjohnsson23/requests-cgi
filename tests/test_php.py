@@ -21,7 +21,7 @@ def test_get(php_session, bind_url):
 
 @pytest.mark.script_name('echo')
 def test_query_string(php_session, bind_url):
-    response = php_session.get('https://example.com/?one=1&two=2')
+    response = php_session.get(urljoin(bind_url, '/?one=1&two=2'))
     assert response.status_code == 200
     json = response.json()
     assert json['$_SERVER']['REQUEST_METHOD'] == 'GET'
