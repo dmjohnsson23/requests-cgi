@@ -15,6 +15,7 @@ class PHPAdapter(CGIAdapter):
     def __init__(self, 
         php_script: str | bytes | PathLike[str] | PathLike[bytes] = None,
         working_dir: Optional[str | bytes | PathLike[str] | PathLike[bytes]] = None,
+        override_env: Optional[dict] = None,
         *,
         command: str | bytes | PathLike[str] | PathLike[bytes] | Sequence[str | bytes | PathLike[str] | PathLike[bytes]] = 'php-cgi', 
         ):
@@ -25,15 +26,16 @@ class PHPAdapter(CGIAdapter):
             the document root by the router.
         :param command: The command to execute for the php-cgi binary.
         """
-        super().__init__(command, working_dir)
+        super().__init__(command, working_dir, override_env)
         self.php_script = php_script
     
-    def build_cgi_env(self, request):
-        env = super().build_cgi_env(request)
+    def _cgi_env_helper(self, request):
         url = urlparse(request.url)
-        env['REDIRECT_STATUS'] = '200' # Required, PHP will refuse to run if this does not have a value
-        env['SCRIPT_NAME'] = url.path
-        env['REQUEST_URI'] = request.path_url
+        env = {
+            'REDIRECT_STATUS': '200', # Required, PHP will refuse to run if this does not have a value
+            'SCRIPT_NAME': url.path,
+            'REQUEST_URI': request.path_url,
+        }
         if self.working_dir is not None:
             env['DOCUMENT_ROOT'] = self.working_dir
             env['CONTEXT_DOCUMENT_ROOT'] = self.working_dir

@@ -37,19 +37,28 @@ sess.mount(
     'https://php.org/', # Requests to this domain will use the PHP adapter...
     requests_cgi.PHPAdapter() # ...and the adapter will choose the PHP script based on the URL path in each request
 )
+sess.mount(
+    'https://example.net/', # Requests to this domain will use the FastCGI adapter...
+    requests_cgi.FastCGIAdapter('fcgi.sock') # ...and the adapter will relay traffic to this unix socket via FastCGI
+)
+from socket import AddressFamily
+sess.mount(
+    'https://example.org/', # Requests to this domain will use the FastCGI adapter...
+    requests_cgi.FastCGIAdapter(('127.0.0.1', 1234), AddressFamily.AF_INET) # ...and the adapter will relay traffic to this IP and Port via FastCGI
+)
 ```
 
 ## Roadmap
 
 For sure happening:
 
-* Support FastCGI in addition to CGI
+* Add more tests
+* Added extended FastCGI adapter for PHP-FPM
 
 Maybe happening:
 
-* Additional special-purpose adapters for other common languages or frameworks (e.g. Perl?) like the current PHP adapter (I'm not sure what features would be actually helpful to implement for other languages/frameworks though)
-* Support SCGI (Not commonly used in the wild, but it may help me as an educational stepping-stone before reaching FastCGI)
+* Additional special-purpose adapters for other common languages or frameworks (e.g. Perl?) like the current PHP adapter (I'm not sure what features would be actually helpful to implement for other languages/frameworks though.)
 
-Not happening:
+Probably not happening:
 
-* Support WSGI (Since both applications are Python-based, I don't see a point)
+* Support WSGI (Since both applications would be Python-based, I don't see a point. There are better ways to accomplish all use cases I can think of.)

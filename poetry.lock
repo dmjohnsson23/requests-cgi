@@ -138,6 +138,42 @@ files = [
 test = ["pytest (>=6)"]
 
 [[package]]
+name = "fastcgi"
+version = "0.0.3"
+description = "A fastcgi handler for Python's `socketserver` classes"
+optional = false
+python-versions = ">=3.6"
+files = [
+    {file = "fastcgi-0.0.3-py3-none-any.whl", hash = "sha256:f749fe88cfebc1bdcb34baa020c4eec22e60b272ec616c262d7e7f85c12a07ee"},
+    {file = "fastcgi-0.0.3.tar.gz", hash = "sha256:6c41a8c8ab4ea7f5cd30010df8ee9aa14b5a0ba1bf683e29f343e1a61358453f"},
+]
+
+[package.dependencies]
+fastcore = "*"
+packaging = "*"
+pip = "*"
+
+[package.extras]
+dev = ["jupyter", "nbdev"]
+
+[[package]]
+name = "fastcore"
+version = "1.7.20"
+description = "Python supercharged for fastai development"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "fastcore-1.7.20-py3-none-any.whl", hash = "sha256:7d81f2a0da27d10df6d0b0050b08ea3eb2b1bb2894e8970f246be49c9a593c01"},
+    {file = "fastcore-1.7.20.tar.gz", hash = "sha256:316dcb0e2d5e338e069f338b3c136ca9eb4ce950ca433da2a80952fc5928ddab"},
+]
+
+[package.dependencies]
+packaging = "*"
+
+[package.extras]
+dev = ["llms-txt", "matplotlib", "nbclassic", "nbdev (>=0.2.39)", "numpy", "pandas", "pillow", "pysymbol-llm", "torch"]
+
+[[package]]
 name = "idna"
 version = "3.10"
 description = "Internationalized Domain Names in Applications (IDNA)"
@@ -171,6 +207,17 @@ python-versions = ">=3.8"
 files = [
     {file = "packaging-24.2-py3-none-any.whl", hash = "sha256:09abb1bccd265c01f4a3aa3f7a7db064b36514d2cba19a2f694fe6150451a759"},
     {file = "packaging-24.2.tar.gz", hash = "sha256:c228a6dc5e932d346bc5739379109d49e8853dd8223571c7c5b55260edc0b97f"},
+]
+
+[[package]]
+name = "pip"
+version = "24.3.1"
+description = "The PyPA recommended tool for installing Python packages."
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "pip-24.3.1-py3-none-any.whl", hash = "sha256:3790624780082365f47549d032f3770eeb2b1e8bd1f7b2e02dace1afa361b4ed"},
+    {file = "pip-24.3.1.tar.gz", hash = "sha256:ebcb60557f2aefabc2e0f918751cd24ea0d56d8ec5445fe1807f1d2109660b99"},
 ]
 
 [[package]]
@@ -292,4 +339,4 @@ zstd = ["zstandard (>=0.18.0)"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.8"
-content-hash = "ec96afaad9ad6b43dff38ad8eb9ca115c66148f944810c0389986feb817ac0d3"
+content-hash = "4951b8afd13a0fbf782e42a2d4d332414fb40ce90b941e9c82902442700ebd4a"

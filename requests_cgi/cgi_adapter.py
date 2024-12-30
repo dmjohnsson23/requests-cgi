@@ -29,7 +29,8 @@ class CGIAdapter(BaseAdapter):
 
     def __init__(self, 
         command: str | bytes | PathLike[str] | PathLike[bytes] | Sequence[str | bytes | PathLike[str] | PathLike[bytes]], 
-        working_dir: Optional[str | bytes | PathLike[str] | PathLike[bytes]] = None
+        working_dir: Optional[str | bytes | PathLike[str] | PathLike[bytes]] = None,
+        override_env: Optional[dict] = None,
         ):
         """
         :param command: The command to execute for the CGI application.
@@ -38,6 +39,7 @@ class CGIAdapter(BaseAdapter):
         super().__init__()
         self.command = command
         self.working_dir = working_dir
+        self.override_env = override_env
     
     def send(self, request: PreparedRequest, stream:bool = False, timeout:Optional[Union[float,tuple]] = None, verify = True, cert = None, proxies = None):
         env = self.build_cgi_env(request)
@@ -53,6 +55,9 @@ class CGIAdapter(BaseAdapter):
         # Connection timeout is ignored; it doesn't make sense in this context
         if isinstance(timeout, tuple):
             timeout = timeout[1]
+        return self.execute_send(request, env, stdin, timeout)
+    
+    def execute_send(self, request: PreparedRequest, env: dict, stdin: Optional[bytes], timeout: Optional[float]):
         try:
             result = run(self.command, capture_output=True, cwd=self.working_dir, env=env, input=stdin, check=True, timeout=timeout)
         except CalledProcessError as e:
@@ -74,6 +79,21 @@ class CGIAdapter(BaseAdapter):
     def build_cgi_env(self, request: PreparedRequest)->dict:
         """
         Build a dictionary of environment variables to use when executing the CGI application.
+
+        It is recommended to overwrite ``_cgi_env_helper`` instead of this method
+        """
+        env = {}
+        for cls in reversed(self.__class__.__mro__):
+            if '_cgi_env_helper' in cls.__dict__.keys():
+                env.update(cls._cgi_env_helper(self, request))
+        if self.override_env is not None:
+            env.update(self.override_env)
+        return env
+    
+    def _cgi_env_helper(self, request: PreparedRequest)->dict:
+        """
+        This method will be called for *each* class in the inheritance hierarchy, and the resulting
+        dicts will all be merged together.
         """
         url = urlparse(request.url)
         # Standard environment variables
