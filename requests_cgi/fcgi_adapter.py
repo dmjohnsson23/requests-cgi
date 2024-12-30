@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from enum import IntEnum
+from enum import IntEnum, IntFlag
 from requests import PreparedRequest
 from requests.exceptions import ConnectionError, ReadTimeout
 from socket import socket, error as SocketError, AddressFamily, SOL_SOCKET, SO_REUSEADDR
@@ -9,17 +9,19 @@ import random
 
 from .cgi_adapter import CGIAdapter
 
-__all__ = ('FastCGIAdapter',)
+__all__ = ('FastCGIAdapter','launch_fcgi')
+
+# See https://fastcgi-archives.github.io/FastCGI_Specification.html
 
 FASTCGI_VERSION = 1
 
-class FastCGIRole(IntEnum):
+class Role(IntEnum):
     responder = 1
     authorizer = 2
     filter = 3
 
 
-class FastCGIType(IntEnum):
+class RecordType(IntEnum):
     begin = 1
     abort = 2
     end = 3
@@ -28,24 +30,24 @@ class FastCGIType(IntEnum):
     stdout = 6
     stderr = 7
     data = 8
-    getvalues = 9
-    getvalues_result = 10
-    unkowntype = 11
+    get_values = 9
+    get_values_result = 10
+    unknown_type = 11
 
 
-class FastCGIState(IntEnum):
+class State(IntEnum):
     send = 1
     error = 2
     success = 3
 
 
+# Specs: https://fastcgi-archives.github.io/FastCGI_Specification.html#S3.3
 _HEADER_STRUCT = Struct(">BBHHBx")
-_UNSIGNED_LONG_STRUCT = Struct(">L")
 @dataclass
-class FastCGIHeader:
+class RecordHeader:
     version: int
-    type: FastCGIType
-    request_id: int
+    type: RecordType
+    request_id: int # value 0 reserved for management records; values 1-0xffff allowed
     content_length: int
     padding_length: int
 
@@ -62,19 +64,20 @@ class FastCGIHeader:
             self.padding_length, 
         )
 
+
 @dataclass
-class FastCGIRecord:
-    header: FastCGIHeader
+class Record:
+    header: RecordHeader
     content: bytes
 
     @classmethod
-    def create(cls, fcgi_type: FastCGIType, content: bytes, req_id: int):
-        header = FastCGIHeader(
+    def create(cls, fcgi_type: RecordType, content: bytes, req_id: int):
+        header = RecordHeader(
             FASTCGI_VERSION,
             fcgi_type,
             req_id,
             len(content),
-            0,
+            0, # TODO padding is recommended to make the full record length a multiple of 8 bytes
         )
         return cls(header, content)
     
@@ -83,7 +86,7 @@ class FastCGIRecord:
         header = stream.read(_HEADER_STRUCT.size)
         if not header:
             return None
-        header = FastCGIHeader.decode(header)
+        header = RecordHeader.decode(header)
 
         content = bytearray()
         bytes_read = 0
@@ -97,8 +100,46 @@ class FastCGIRecord:
         stream.read(header.padding_length)
         return cls(header, content)
 
+    def encode(self)->bytes:
+        return b''.join((self.header.encode(), self.content, bytes(self.header.padding_length)))
+
+
+# Specs: https://fastcgi-archives.github.io/FastCGI_Specification.html#S3.4
+_UNSIGNED_LONG_STRUCT = Struct(">L")
+@dataclass
+class NameValue:
+    name: bytes
+    value: bytes
+
     def encode(self):
-        return self.header.encode() + self.content
+        len_name = len(self.name)
+        len_value = len(self.value)
+        lengths = bytearray()
+        if len_name < 128:
+            lengths.append(len_name)
+        else:
+            lengths.extend(_UNSIGNED_LONG_STRUCT.pack(len_name | 0x80_00_00_00))
+        if len_value < 128:
+            lengths.append(len_value)
+        else:
+            lengths.extend(_UNSIGNED_LONG_STRUCT.pack(len_value | 0x80_00_00_00))
+        return lengths + self.name + self.value
+
+
+class BeginRequestOptions(IntFlag):
+    keep_connection = 1
+
+
+# Specs: https://fastcgi-archives.github.io/_Specification.html#S5.1
+_BEGIN_REQUEST_STRUCT = Struct(">HBxxxxx")
+@dataclass
+class BeginRequestBody:
+    role: Role
+    flags: BeginRequestOptions = BeginRequestOptions(0)
+
+    def encode(self):
+        return _BEGIN_REQUEST_STRUCT.pack(self.role, self.flags)
+
 
 class FastCGIAdapter(CGIAdapter):
     """
@@ -174,70 +215,61 @@ class FastCGIAdapter(CGIAdapter):
         while req_id in self.requests:
             req_id = random.randint(0x1, 0xffff)
         self.requests[req_id] = {}
-        request_record = bytearray()
-        record_content = bytearray()
-        record_content.append(0)
-        record_content.append(FastCGIRole.responder)
-        record_content.append(0) # keepalive
-        record_content += bytes(5)
-        request_record += self._encode_record(FastCGIType.begin, record_content, req_id)
+        packet = bytearray()
+        packet += Record.create(RecordType.begin, BeginRequestBody(Role.responder).encode(), req_id).encode()
         
         params = bytearray()
         if env:
             for name, value in env.items():
-                params += self._encode_param(name.encode('ascii'), value.encode('ascii'))
+                params += NameValue(name.encode('ascii'), value.encode('ascii')).encode()
 
         if len(params) > 0:
-            request_record += self._encode_record(FastCGIType.params, params, req_id)
-        request_record += self._encode_record(FastCGIType.params, bytearray(), req_id)
+            packet += Record.create(RecordType.params, params, req_id).encode()
+        packet += Record.create(RecordType.params, bytearray(), req_id).encode()
 
         if stdin:
-            request_record += self._encode_record(FastCGIType.stdin, stdin, req_id)
-        request_record += self._encode_record(FastCGIType.stdin, bytearray(), req_id)
+            packet += Record.create(RecordType.stdin, stdin, req_id).encode()
+        packet += Record.create(RecordType.stdin, bytearray(), req_id).encode()
         # Send request
-        self.socket.send(request_record)
-        self.requests[req_id]['state'] = FastCGIState.send
+        self.socket.send(packet)
+        self.requests[req_id]['state'] = State.send
         self.requests[req_id]['response'] = bytearray()
         return self.build_response(request, self.await_response(req_id))
     
     def await_response(self, req_id):
         while True:
-            record = FastCGIRecord.read_from_stream(self)
+            record = Record.read_from_stream(self)
             if not record:
                 break
 
             # FIXME The header ID returned is always 1 for some reason?
             # if req_id != header.request_id:
             #     continue
-            if record.header.type == FastCGIType.stdout:
+            if record.header.type == RecordType.stdout:
                 self.requests[req_id]['response'] += record.content
-            if record.header.type == FastCGIType.stderr:
-                self.requests[req_id]['state'] = FastCGIState.error
+            if record.header.type == RecordType.stderr:
+                self.requests[req_id]['state'] = State.error
                 if req_id == record.header.request_id:
                     self.requests[req_id]['response'] += record.content
-            if record.header.type == FastCGIType.end:
-                if self.requests[req_id]['state'] != FastCGIState.error:
-                    self.requests[req_id]['state'] = FastCGIState.success
+            if record.header.type == RecordType.end:
+                 # TODO an END packet may not always be a graceful end; see https://fastcgi-archives.github.io/FastCGI_Specification.html#S5.5
+                if self.requests[req_id]['state'] != State.error:
+                    self.requests[req_id]['state'] = State.success
         
         self.close()
         response = self.requests[req_id]['response']
         del self.requests[req_id]
 
         return response
-    
-    def _encode_record(self, fcgi_type: FastCGIType, content: bytes, req_id: int):
-        return FastCGIRecord.create(fcgi_type, content, req_id).encode()
 
-    def _encode_param(self, name: bytes, value: bytes):
-        len_name = len(name)
-        len_value = len(value)
-        record = bytearray()
-        if len_name < 128:
-            record.append(len_name)
-        else:
-            record.extend(_UNSIGNED_LONG_STRUCT.pack(len_name | 0x80_00_00_00))
-        if len_value < 128:
-            record.append(len_value)
-        else:
-            record.extend(_UNSIGNED_LONG_STRUCT.pack(len_value | 0x80_00_00_00))
-        return record + name + value
+
+    def launch(self, command):
+        """
+        Launch a FastCGI process as if we are a web server.
+        """
+        # TODO: I'm trying to wrap my head around this. The specs claim that we should provide a socket
+        # handle via the FCGI_LISTENSOCK_FILENO environment variable. However, the socket doesn't exist
+        # yet. I'm fairly certain the FastCGI application is considered the server in this context,
+        # and this code is considered the client, so the server should be the one to create the socket, 
+        # right? I'm not a socket guru, so I guess I'm just confused.
+        raise NotImplementedError()
