@@ -5,7 +5,6 @@ from requests.exceptions import ConnectionError, ReadTimeout
 from socket import socket, error as SocketError, AddressFamily, SOL_SOCKET, SO_REUSEADDR
 from struct import Struct
 from typing import Optional
-import random
 
 from .cgi_adapter import CGIAdapter
 
@@ -72,12 +71,17 @@ class Record:
 
     @classmethod
     def create(cls, fcgi_type: RecordType, content: bytes, req_id: int):
+        # The spec recommends padding to make the full record length a multiple of 8 bytes. This 
+        # is supposedly a performance thing. However, in practice I actually got worse performance 
+        # when I tried it. Anyway, performance seems perfectly fine with or without padding. And I 
+        # also doubt this library will ever reach the level of optimization where tweaks like that 
+        # would be impactful.
         header = RecordHeader(
             FASTCGI_VERSION,
             fcgi_type,
             req_id,
             len(content),
-            0, # TODO padding is recommended to make the full record length a multiple of 8 bytes
+            0,
         )
         return cls(header, content)
     
@@ -92,11 +96,11 @@ class Record:
         bytes_read = 0
         while bytes_read < header.content_length:
             buffer = stream.read(header.content_length - bytes_read)
-            bytes_read += len(buffer)
-            if buffer:
-                content += buffer
-            if len(buffer) == 0:
+            if not buffer:
                 break
+            bytes_read += len(buffer)
+            content += buffer
+        # TODO not sure why we need all that above to fully capture the regular content, but not the padding...
         stream.read(header.padding_length)
         return cls(header, content)
 
@@ -243,9 +247,14 @@ class FastCGIAdapter(CGIAdapter):
         # Send request
         self.socket.send(packet)
         self.requests[req_id] = ActiveRequest(req_id, State.send, bytearray())
-        return self.build_response(request, self.await_response(req_id))
+        response = self.await_response(req_id)
+        if response.state == State.success:
+            return self.build_response(request, response.content)
+        else:
+            # TODO capture and display stderr
+            raise ConnectionError('Invalid response', request=request)
     
-    def await_response(self, req_id):
+    def await_response(self, req_id)->ActiveRequest:
         while True:
             record = Record.read_from_stream(self)
             if not record:
@@ -271,7 +280,7 @@ class FastCGIAdapter(CGIAdapter):
                     self.requests[req_id].state = State.success
         
         self.close()
-        response = self.requests[req_id].content
+        response = self.requests[req_id]
         self.requests[req_id] = None
 
         return response

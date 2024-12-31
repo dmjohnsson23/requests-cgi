@@ -19,6 +19,13 @@ def fcgi_session(script_name, bind_url, tmp_path):
     server.terminate()
     os.unlink(tmp_path / 'fcgi.sock')
 
+@pytest.mark.script_name('get')
+def test_get(fcgi_session, bind_url):
+    response = fcgi_session.get(bind_url)
+    assert response.status_code == 200
+    assert response.headers['x-test-header'] == 'yep'
+    assert response.text.strip() == "You got me!"
+
 @pytest.mark.script_name('echo')
 def test_post(fcgi_session, bind_url):
     response = fcgi_session.post(bind_url, "ECHO!")
@@ -33,3 +40,15 @@ def test_multiple_requests(fcgi_session, bind_url):
     response = fcgi_session.post(bind_url, "ECHO!")
     assert response.status_code == 200
     assert response.text.strip() == "ECHO!"
+
+@pytest.mark.script_name('status_404')
+def test_get(fcgi_session, bind_url):
+    response = fcgi_session.get(bind_url)
+    assert response.status_code == 404
+
+@pytest.mark.script_name('reflect')
+def test_send_headers(fcgi_session, bind_url):
+    response = fcgi_session.get(bind_url, headers={'x-test':'okie-dokie!'})
+    assert response.status_code == 200
+    json = response.json()
+    assert json['env']['HTTP_X_TEST'] == 'okie-dokie!'
