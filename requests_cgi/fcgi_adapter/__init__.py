@@ -37,7 +37,7 @@ class FastCGIAdapter(CGIAdapter):
         env = {}
         if isinstance(self.connection, ExternalConnection) and self.connection.address_family == AddressFamily.AF_INET:
             # Address of server
-            ip, port = self.address
+            ip, port = self.connection.address
             env['SERVER_ADDR'] = ip
             env['SERVER_PORT'] = port
             # Address of client

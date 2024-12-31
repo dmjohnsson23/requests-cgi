@@ -33,25 +33,35 @@ sess = requests.Session()
 # The domains your mount to can be anything you like, and do not need to exist.
 # If they do exist, mounting the adapter will prevent access to the real site.
 sess.mount(
-    'https://example.com/', # Requests to this domain will use the CGI adapter...
-    requests_cgi.CGIAdapter(['sh', 'myscript.sh']) # ...and the adapter will use this CGI script for all paths
+    # Requests to this domain will use the CGI adapter...
+    'https://example.com/', 
+    # ...and the adapter will use this CGI script for all paths
+    requests_cgi.CGIAdapter(['sh', 'myscript.sh']) 
 )
 sess.mount(
-    'https://php.net/', # Requests to this domain will use the PHP adapter...
-    requests_cgi.PHPAdapter('router.php') # ...and the adapter will use this PHP script for all paths
+    # Requests to this domain will use the PHP adapter...
+    'https://php.net/', 
+    # ...and the adapter will use this 'router.php' for all paths
+    requests_cgi.PHPAdapter('router.php') 
 )
 sess.mount(
-    'https://php.org/', # Requests to this domain will use the PHP adapter...
-    requests_cgi.PHPAdapter() # ...and the adapter will choose the PHP script based on the URL path in each request
+    # Requests to this domain will use the PHP adapter...
+    'https://php.org/', 
+    # ...and the adapter will choose the PHP script based on the URL path in each request
+    requests_cgi.PHPAdapter() 
 )
 sess.mount(
-    'https://example.net/', # Requests to this domain will use the FastCGI adapter...
-    requests_cgi.FastCGIAdapter.connect('fcgi.sock') # ...and the adapter will relay traffic to this unix socket via FastCGI
+    # Requests to this domain will use the FastCGI adapter...
+    'https://example.net/', 
+    # ...and the adapter will relay traffic to this unix socket via FastCGI
+    requests_cgi.FastCGIAdapter.connect('fcgi.sock') 
 )
 from socket import AddressFamily
 sess.mount(
-    'https://example.org/', # Requests to this domain will use the FastCGI adapter...
-    requests_cgi.FastCGIAdapter.connect(('127.0.0.1', 1234), AddressFamily.AF_INET) # ...and the adapter will relay traffic to this IP and Port via FastCGI
+    # Requests to this domain will use the FastCGI adapter...
+    'https://example.org/', 
+    # ...and the adapter will relay traffic to this IP and Port via FastCGI
+    requests_cgi.FastCGIAdapter.connect(('127.0.0.1', 1234), AddressFamily.AF_INET) 
 )
 # Note: if the FastCGI process is not already running on your machine, you will need to start it 
 # before you can use the FastCGI adapter. The adapter will not attempt to launch the process; 
