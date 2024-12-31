@@ -127,7 +127,7 @@ class NameValue:
 
 
 class BeginRequestOptions(IntFlag):
-    keep_connection = 1
+    keep_connection = 0b00000001
 
 
 # Specs: https://fastcgi-archives.github.io/_Specification.html#S5.1
@@ -141,6 +141,13 @@ class BeginRequestBody:
         return _BEGIN_REQUEST_STRUCT.pack(self.role, self.flags)
 
 
+@dataclass
+class ActiveRequest:
+    id: int
+    state: State
+    content: bytearray
+
+
 class FastCGIAdapter(CGIAdapter):
     """
     Reads and interprets an HTTP response from a FastCGI application.
@@ -150,7 +157,7 @@ class FastCGIAdapter(CGIAdapter):
 
     def __init__(self, address, address_family:AddressFamily=AddressFamily.AF_UNIX, override_env: Optional[dict] = None):
         self.socket = None
-        self.requests = {} # Keep track of in-flight requests
+        self.requests = [None] # Keep track of in-flight requests
         # Convenience conversion for address
         if address_family == AddressFamily.AF_INET and not isinstance(address, tuple):
             # Split a host:port string
@@ -210,30 +217,32 @@ class FastCGIAdapter(CGIAdapter):
     def execute_send(self, request: PreparedRequest, env: dict, stdin: Optional[bytes], timeout: Optional[float]):
         self.connect()
         self.socket.settimeout(timeout)
-        # Generate a unique request ID
-        req_id = random.randint(0x1, 0xffff)
-        while req_id in self.requests:
-            req_id = random.randint(0x1, 0xffff)
-        self.requests[req_id] = {}
+        # Get the lowest available request ID (See https://fastcgi-archives.github.io/FastCGI_Specification.html#S3.3 "Managing request IDs")
+        try:
+            req_id = self.requests.index(None, 1)
+        except ValueError:
+            req_id = len(self.requests)
+            self.requests.append(None)
+        # Assemble the packet
+        # First the begin request record
         packet = bytearray()
         packet += Record.create(RecordType.begin, BeginRequestBody(Role.responder).encode(), req_id).encode()
-        
+        # Then the params (pseudo environment variables)
         params = bytearray()
         if env:
             for name, value in env.items():
                 params += NameValue(name.encode('ascii'), value.encode('ascii')).encode()
-
         if len(params) > 0:
             packet += Record.create(RecordType.params, params, req_id).encode()
         packet += Record.create(RecordType.params, bytearray(), req_id).encode()
-
+        # Then the main request body (pseudo sdtin)
         if stdin:
             packet += Record.create(RecordType.stdin, stdin, req_id).encode()
+        # Stream ends with an empty record (see https://fastcgi-archives.github.io/FastCGI_Specification.html#S3.3 "Types of record types")
         packet += Record.create(RecordType.stdin, bytearray(), req_id).encode()
         # Send request
         self.socket.send(packet)
-        self.requests[req_id]['state'] = State.send
-        self.requests[req_id]['response'] = bytearray()
+        self.requests[req_id] = ActiveRequest(req_id, State.send, bytearray())
         return self.build_response(request, self.await_response(req_id))
     
     def await_response(self, req_id):
@@ -242,23 +251,28 @@ class FastCGIAdapter(CGIAdapter):
             if not record:
                 break
 
-            # FIXME The header ID returned is always 1 for some reason?
-            # if req_id != header.request_id:
-            #     continue
+            # FIXME The request ID returned from the FastCGI script is always 1 for some reason, 
+            # even if we send a larger value. Not a problem now, because we aren't sending 
+            # concurrent requests and always use the lowest available ID anyway, but possibly an 
+            # issue in the future. I also suspect this is an issue with the FastCGI script, not 
+            # this code.
+            if req_id != record.header.request_id:
+                # TODO there could be records we shouldn't just ignore
+                continue
             if record.header.type == RecordType.stdout:
-                self.requests[req_id]['response'] += record.content
+                self.requests[req_id].content += record.content
             if record.header.type == RecordType.stderr:
-                self.requests[req_id]['state'] = State.error
+                self.requests[req_id].state = State.error
                 if req_id == record.header.request_id:
-                    self.requests[req_id]['response'] += record.content
+                    self.requests[req_id].content += record.content
             if record.header.type == RecordType.end:
                  # TODO an END packet may not always be a graceful end; see https://fastcgi-archives.github.io/FastCGI_Specification.html#S5.5
-                if self.requests[req_id]['state'] != State.error:
-                    self.requests[req_id]['state'] = State.success
+                if self.requests[req_id].state != State.error:
+                    self.requests[req_id].state = State.success
         
         self.close()
-        response = self.requests[req_id]['response']
-        del self.requests[req_id]
+        response = self.requests[req_id].content
+        self.requests[req_id] = None
 
         return response
 

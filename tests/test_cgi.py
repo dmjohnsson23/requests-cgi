@@ -46,8 +46,7 @@ def test_non_existent(sh_session, bind_url):
     with pytest.raises(requests.exceptions.ConnectionError):
         sh_session.get(bind_url)
 
-@pytest.mark.skip('Not yet passing')
 @pytest.mark.script_name('malformed')
 def test_malformed(sh_session, bind_url):
     with pytest.raises(requests.exceptions.ConnectionError):
-        sh_session.get(bind_url).headers
+        sh_session.get(bind_url)

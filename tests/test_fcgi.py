@@ -24,3 +24,12 @@ def test_post(fcgi_session, bind_url):
     response = fcgi_session.post(bind_url, "ECHO!")
     assert response.status_code == 200
     assert response.text.strip() == "ECHO!"
+
+@pytest.mark.script_name('echo')
+def test_multiple_requests(fcgi_session, bind_url):
+    response = fcgi_session.post(bind_url, "ECHO!")
+    assert response.status_code == 200
+    assert response.text.strip() == "ECHO!"
+    response = fcgi_session.post(bind_url, "ECHO!")
+    assert response.status_code == 200
+    assert response.text.strip() == "ECHO!"

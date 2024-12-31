@@ -96,7 +96,7 @@ class CGIAdapter(BaseAdapter):
         dicts will all be merged together.
         """
         url = urlparse(request.url)
-        # Standard environment variables
+        # Standard environment variables, see http://graphcomp.com/info/specs/cgi11.html "Environment Variables"
         env = {
             'HTTP_HOST': url.hostname,
             'PATH_INFO': request.path_url,
@@ -107,15 +107,17 @@ class CGIAdapter(BaseAdapter):
             'SCRIPT_NAME': '/', # TODO is this right?
             'SERVER_NAME': url.hostname,
             'SERVER_PROTOCOL': 'HTTP/1.1',
+            'SERVER_SOFTWARE' : 'python/requests-cgi',
             'GATEWAY_INTERFACE': 'CGI/1.1',
-            # CONTENT_TYPE
             # AUTH_TYPE
             # PATH_TRANSLATED
             # REMOTE_IDENT
             # REMOTE_USER
             # SERVER_PORT
-            # SERVER_SOFTWARE 
         }
+        if 'content-type' in request.headers:
+            env['CONTENT_TYPE'] = request.headers['content-type']
+        # TODO auth
         # HTTP headers as environment variables
         for key, value in request.headers.items():
             env[f"HTTP_{key.upper().replace('-', '_')}"] = value
@@ -133,10 +135,12 @@ class CGIAdapter(BaseAdapter):
         """
         Parse the CGI response into a Requests Response object
         """
+        if not raw_response:
+            raise ConnectionError('Received empty response', request=request)
         is_parsed_mode = not raw_response.startswith(b'HTTP/') # See http://graphcomp.com/info/specs/cgi11.html "Data output from the CGI script"
         if is_parsed_mode:
             # Pretend it's a normal response for now
-            raw_response = b'HTTP/1.1 200\n'+raw_response
+            raw_response = b'HTTP/1.1 200 Okay\n'+raw_response
         raw_response = BytesIO(raw_response)
         http_response = CGIResponse(raw_response)
         try:
@@ -147,45 +151,51 @@ class CGIAdapter(BaseAdapter):
 
         # See https://docs.python-requests.org/en/latest/_modules/requests/adapters/#HTTPAdapter.build_response
         response = Response()
-
-        # Make headers case-insensitive.
-        response.headers = CaseInsensitiveDict(getattr(http_response, "headers", {}))
-
-        if is_parsed_mode:
-            # The status is in the headers instead of the normal place
-            status = response.headers.get('status')
-            if status:
-                try:
-                    response.status_code = int(status[:3])
-                except ValueError:
-                    raise ConnectionError(f"Could not parse status header: {status}", request=request)
-                response.reason = status[4:]
-            else:
-                response.status_code = None
-        else:
-            # Fallback to None if there's no status_code, for whatever reason.
-            response.status_code = getattr(http_response, "status", None)
-            response.reason = http_response.reason
-        if response.status_code is None:
-            # CGI applications may not send a status code, so we have to infer it
-            # TODO look for location header and use redirect status code if found
-            response.status_code = 200
-            response.reason = 'Okay'
-
-        # Set encoding.
-        response.encoding = get_encoding_from_headers(response.headers)
         response.raw = http_response
+
+        # Give the Response some context.
+        response.request = request
+        response.connection = self
 
         if isinstance(request.url, bytes):
             response.url = request.url.decode("utf-8")
         else:
             response.url = request.url
 
+        # Make headers case-insensitive.
+        response.headers = CaseInsensitiveDict(getattr(http_response, "headers", {}))
+
+        if is_parsed_mode:
+            # The status is in the headers instead of the normal place
+            # The script MUST supply EXACTLY one of these headers
+            # TODO: Technically the CGI header should be first to keep it distinct from HTTP 
+            # headers of the same name, but we are not implementing that here currently, thus we 
+            # are also not enforcing the "exactly one" rule either.
+            status = response.headers.get('status')
+            location = response.headers.get('location')
+            content_type = response.headers.get('content-type')
+            if status:
+                try:
+                    response.status_code = int(status[:3])
+                except ValueError:
+                    raise ConnectionError(f"Could not parse status header: {status}", request=request, response=response)
+                response.reason = status[4:]
+            elif location:
+                response.status_code = 302
+                response.reason = 'Found'
+            elif content_type:
+                response.status_code = 200
+                response.reason = 'Okay'
+            else:
+                raise ConnectionError('CGI response must include one of the following headers: Status, Location, or Content-Type', request=request, response=response)
+        else:
+            response.status_code = http_response.status
+            response.reason = http_response.reason
+
+        # Set encoding.
+        response.encoding = get_encoding_from_headers(response.headers)
+
         # Add new cookies from the server.
         response.cookies.extract_cookies(http_response, MockRequest(request))
-
-        # Give the Response some context.
-        response.request = request
-        response.connection = self
 
         return response
