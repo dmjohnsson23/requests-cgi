@@ -2,8 +2,9 @@ import pytest
 from subprocess import Popen
 import requests
 import requests_cgi
-import os
+import os, sys
 from time import sleep, time
+from urllib.parse import urljoin
 
 @pytest.fixture
 def fcgi_session(script_name, bind_url, tmp_path):
@@ -14,7 +15,7 @@ def fcgi_session(script_name, bind_url, tmp_path):
             raise Exception(f'Timeout waiting for FastCGI script to create socket: {script_name}')
         sleep(.1)
     sess = requests.session()
-    sess.mount(bind_url, requests_cgi.FastCGIAdapter(tmp_path / 'fcgi.sock'))
+    sess.mount(bind_url, requests_cgi.FastCGIAdapter.connect(tmp_path / 'fcgi.sock'))
     yield sess
     server.terminate()
     os.unlink(tmp_path / 'fcgi.sock')
@@ -52,3 +53,10 @@ def test_send_headers(fcgi_session, bind_url):
     assert response.status_code == 200
     json = response.json()
     assert json['env']['HTTP_X_TEST'] == 'okie-dokie!'
+
+def test_launch(bind_url):
+    sess = requests.session()
+    sess.mount(bind_url, requests_cgi.FastCGIAdapter.launch([sys.executable, os.path.join(os.path.dirname(__file__), 'fcgi_scripts/launched.py')]))
+    response = sess.get(urljoin(bind_url, '/?one=1&two=2'), timeout=1)
+    assert response.status_code == 200
+    assert response.text == '/?one=1&two=2'

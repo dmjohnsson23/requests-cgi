@@ -7,4 +7,5 @@ class PHPFPMAdapter(FastCGIAdapter, PHPAdapter):
     """
     A FastCGIAdapter specially tailored to work with PHP-FPM
     """
+    php_script = None # TODO combined init that allows setting this
     pass
